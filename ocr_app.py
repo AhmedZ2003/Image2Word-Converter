@@ -23,7 +23,7 @@ class TechyOCRApp(ctk.CTk):
         super().__init__()
 
         # Window Setup
-        self.title("NeuralText Converter Pro")
+        self.title("Image2Word Converter")
         self.geometry("1100x700")
         
         # Grid Layout
@@ -44,7 +44,7 @@ class TechyOCRApp(ctk.CTk):
         self.sidebar_frame.grid_rowconfigure(5, weight=1) # Push bottom items down
 
         # Logo
-        self.logo_label = ctk.CTkLabel(self.sidebar_frame, text="NEURAL\nTEXT GEN", 
+        self.logo_label = ctk.CTkLabel(self.sidebar_frame, text="IMAGE 2\nWORD", 
                                       font=ctk.CTkFont(size=20, weight="bold"))
         self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
 
