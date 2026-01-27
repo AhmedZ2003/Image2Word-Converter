@@ -1,4 +1,4 @@
-# Img2Word
+# Image2Word
 
 **Img2Word Converter** is a modern OCR desktop application that converts images into formatted Word documents.  
 It features a dark GUI, live document preview, and supports bold headers and subheadings.
