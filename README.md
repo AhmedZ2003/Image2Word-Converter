@@ -16,7 +16,9 @@ It features a dark GUI, live document preview, and supports bold headers and sub
 
 ---
 ## Deployment
-Test out the application using the link: https://huggingface.co/spaces/AhmedSenpai/ocr-converter
+Test out the Tesseract application using the link: https://huggingface.co/spaces/AhmedSenpai/ocr-converter
+
+Test out the Gemini application using the link: https://huggingface.co/spaces/AhmedSenpai/Image2Word
 
 ---
 
@@ -24,7 +26,15 @@ Test out the application using the link: https://huggingface.co/spaces/AhmedSenp
 
 If you want to run from source:
 
+For Tesseract
 ```bash
 git clone https://github.com/AhmedZ2003/Image2Word-Converter.git
 pip install -r requirements.txt
-python ocr_app.py
+python ocr_tesseract_app.py
+```
+For Gemini
+```bash
+git clone https://github.com/AhmedZ2003/Image2Word-Converter.git
+pip install -r requirements.txt
+python ocr_gemini_app.py
+```
