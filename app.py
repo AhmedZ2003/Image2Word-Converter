@@ -1,166 +1,124 @@
 import gradio as gr
-import pytesseract
+import google.generativeai as genai
 from PIL import Image
 from docx import Document
-from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 import re
 import os
 import tempfile
 
-# CONFIGURATION: Set Tesseract path if needed
-# pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-
-def parse_hocr(hocr_string):
-    words = []
-    pattern = re.compile(r"<span class=['\"]ocrx_word['\"].*?title=['\"]bbox (\d+) (\d+) (\d+) (\d+).*?>(.*?)</span>", re.DOTALL)
-    matches = pattern.findall(hocr_string)
-    
-    for match in matches:
-        x1, y1, x2, y2, content = match
-        x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-        
-        is_bold = bool(re.search(r"<strong>|<b>", content, re.IGNORECASE))
-        is_italic = bool(re.search(r"<em>|<i>", content, re.IGNORECASE))
-        clean_text = re.sub('<[^<]+?>', '', content).strip()
-        
-        if clean_text:
-            words.append({'text': clean_text, 'x': x1, 'y': y1, 'h': y2-y1, 'bold': is_bold, 'italic': is_italic})
-    return words
-
-def generate_doc_and_preview(words_data):
+def markdown_to_docx(text):
+    # Converts Markdown text (headers and bold) into a DOCX object.
     doc = Document()
+    lines = text.split('\n')
     
-    html_preview = "<div style='background-color: #ffffff; color: #ffffff; padding: 20px; font-family: monospace; border-radius: 5px;'>"
-    
-    lines = {}
-    for word in words_data:
-        y = word['y']
-        found = False
-        for line_y in lines.keys():
-            if abs(line_y - y) < 12: 
-                lines[line_y].append(word)
-                found = True
-                break
-        if not found: lines[y] = [word]
-
-    sorted_y = sorted(lines.keys())
-    all_heights = [w['h'] for w in words_data]
-    median_height = sorted(all_heights)[len(all_heights)//2] if all_heights else 20
-    last_y_bottom = 0
-
-    for y in sorted_y:
-        line_words = sorted(lines[y], key=lambda k: k['x'])
-        current_y_top = y
-        gap = current_y_top - last_y_bottom
-        
-        # Spacing Logic
-        if last_y_bottom > 0 and gap > (median_height * 1.5):
-            doc.add_paragraph("")
-            html_preview += "<br>"
-
-        p = doc.add_paragraph()
-        
-        # Alignment Logic
-        is_centered = line_words[0]['x'] > 90
-        if is_centered: 
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            html_preview += "<div style='text-align: center;'>"
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+            
+        # Header Handling (# Header)
+        if line.startswith('#'):
+            level = line.count('#')
+            clean_text = line.replace('#', '').strip()
+            # Docx supports heading levels 1-9
+            heading_level = min(level, 9)
+            p = doc.add_heading(clean_text, level=heading_level)
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
         else:
-            html_preview += "<div>"
-
-        avg_h = sum([w['h'] for w in line_words]) / len(line_words)
-        is_header = avg_h > (median_height * 1.3)
-
-        for i, word in enumerate(line_words):
-            text = word['text'] if i == 0 else " " + word['text']
-            run = p.add_run(text)
+            # Standard Paragraph with simple Bold parsing
+            p = doc.add_paragraph()
             
-            # HTML Formatting for Preview
-            html_word = text
-            if is_header:
-                run.bold = True
-                run.font.size = Pt(14)
-                # Headers remain light blue for distinction
-                html_word = f"<span style='font-size: 1.3em; font-weight: bold; color: #62a1ff;'>{html_word}</span>"
-            else:
-                run.font.size = Pt(11)
-                if word['bold']: 
+            # Very basic markdown bold parser (**text**)
+            parts = re.split(r'(\*\*.*?\*\*)', line)
+            for part in parts:
+                if part.startswith('**') and part.endswith('**'):
+                    run = p.add_run(part[2:-2])
                     run.bold = True
-                    html_word = f"<b>{html_word}</b>"
-                if word['italic']: 
-                    run.italic = True
-                    html_word = f"<i>{html_word}</i>"
+                else:
+                    p.add_run(part)
             
-            html_preview += html_word
+            p.style = doc.styles['Normal']
             
-        html_preview += "</div>"
-        
-        max_h = max([w['h'] for w in line_words])
-        last_y_bottom = y + max_h
-    
-    html_preview += "</div>"
-    return doc, html_preview
+    return doc
 
-# GRADIO INTERFACE FUNCTION
-
-def process_image(image):
+def process_image(image, api_key):
+    # Takes an image and API key, returns the raw text and a path to the .docx file.
     if image is None:
-        return None, "<div style='color: red'>Please upload an image first.</div>"
+        return "Please upload an image.", None
     
+    if not api_key:
+        return "Please enter a valid Google Gemini API Key.", None
+
     try:
-        # 1. Tesseract OCR
-        pil_img = Image.open(image)
-        hocr_data = pytesseract.image_to_pdf_or_hocr(pil_img, extension='hocr').decode('utf-8')
+        # 1. Configure API
+        genai.configure(api_key=api_key)
         
-        # 2. Parse
-        words = parse_hocr(hocr_data)
-        if not words:
-            return None, "No text detected."
-            
-        # 3. Generate
-        doc_obj, html_preview = generate_doc_and_preview(words)
+        # 2. Select Model
+        model = genai.GenerativeModel('gemini-2.5-flash')
         
-        # 4. Save to temp file for download
-        temp_dir = tempfile.gettempdir()
-        filename = f"converted_doc_{os.urandom(4).hex()}.docx"
-        save_path = os.path.join(temp_dir, filename)
-        doc_obj.save(save_path)
+        # 3. Define Prompt
+        prompt = (
+            "Extract the text from this image. Return the content in Markdown format. "
+            "Use headers (#) for big text, bold (**) for bold text. "
+            "Do not include markdown code block fences (like ```markdown). "
+            "Just return the raw text."
+        )
         
-        return save_path, html_preview
+        
+        # 4. Call Gemini
+        response = model.generate_content([prompt, image])
+        result_text = response.text
+        
+        # 5. Generate DOCX
+        doc = markdown_to_docx(result_text)
+        
+        # 6. Save to a temporary file
+        # Hugging Face spaces act like read-only containers mostly, 
+        # so we use a temporary file path for the output.
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
+        doc.save(temp_file.name)
+        temp_file.close()
+        
+        return result_text, temp_file.name
 
     except Exception as e:
-        return None, f"Error: {str(e)}"
+        return f"Error: {str(e)}", None
 
-# UI LAYOUT
+# Gradio Interface Setup
+
+# Custom CSS to make it look a bit cleaner
 custom_css = """
-body {background-color: #0b0f19;}
-.gradio-container {font-family: 'Roboto', sans-serif;}
+#component-0 {max_width: 800px; margin: auto;}
 """
 
-with gr.Blocks(theme=gr.themes.Soft(primary_hue="blue", secondary_hue="slate"), css=custom_css, title="Image2Word") as app:
-    
-    gr.Markdown(
-        """
-        # 🧠 Image 2 Word Converter
-        ### Professional Image-to-Word Converter with Formatting Preservation
-        """
-    )
+with gr.Blocks(css=custom_css, title="AI Image to Word Converter") as demo:
+    gr.Markdown("# 📄 AI Image to Word (Docx) Converter")
+    gr.Markdown("Upload an image, enter your Google Gemini API Key, and get a formatted Word document back.")
     
     with gr.Row():
-        with gr.Column(scale=1):
-            img_input = gr.Image(type="filepath", label="Source Input", height=400)
-            btn_run = gr.Button("INITIALIZE OCR", variant="primary")
+        with gr.Column():
+            api_input = gr.Textbox(
+                label="Google Gemini API Key", 
+                type="password", 
+                placeholder="Paste your key here (starts with AIza...)"
+            )
+            image_input = gr.Image(type="pil", label="Upload Image")
+            submit_btn = gr.Button("🚀 Convert Image", variant="primary")
         
-        with gr.Column(scale=1):
-            preview_output = gr.HTML(label="Digitized Preview", value="<div style='color:gray'>System Idle...</div>")
-            file_output = gr.File(label="Download Result", interactive=False)
+        with gr.Column():
+            output_text = gr.TextArea(label="Extracted Text (Markdown)", interactive=False)
+            output_file = gr.File(label="Download DOCX")
 
-    btn_run.click(
+    # Connect the button to the function
+    submit_btn.click(
         fn=process_image, 
-        inputs=[img_input], 
-        outputs=[file_output, preview_output]
+        inputs=[image_input, api_input], 
+        outputs=[output_text, output_file]
     )
+    
+    gr.Markdown("Powered by **Gemini 2.5 Flash**")
 
+# Launch the app
 if __name__ == "__main__":
-    app.launch(share=True)
+    demo.launch()

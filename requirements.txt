@@ -2,3 +2,5 @@ gradio
 pytesseract
 Pillow
 python-docx
+google-generativeai
+pytz
